@@ -182,6 +182,7 @@ object Json {
       case null => "null"
       case x: Boolean => x.toString
       case x: Number => x.toString
+		case x : Array[_] => (for(a <- x) yield { build(a)}).mkString("[", ",", "]")
       case list: Seq[_] =>
         list.map(build(_).body).mkString("[", ",", "]")
       case map: Map[_, _] =>

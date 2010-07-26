@@ -295,8 +295,15 @@ object JsonSpec extends Specification {
     }
 
     "build numbers" in {
-      Json.build(List(42, 23L, 1.67, BigDecimal("1.67456352431287348917591342E+50"))).toString mustEqual "[42,23,1.67,1.67456352431287348917591342E+50]";
-      Json.build(Array(0.0, 5.25)).toString mustEqual "[0.0,5.25]"
+		"decimal values" in {
+			Json.build(0.0).toString mustEqual("0.0")
+		}
+		"extended numbers" in {
+			Json.build(List(42, 23L, 1.67, BigDecimal("1.67456352431287348917591342E+50"))).toString mustEqual "[42,23,1.67,1.67456352431287348917591342E+50]"
+		}
+		"arrays of decimals" in {
+			Json.build(Array(0.0, 5.25)).toString mustEqual "[0.0,5.25]"
+			}
     }
 
     "build JsonSerializable objects" in {
