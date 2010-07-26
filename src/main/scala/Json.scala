@@ -16,10 +16,9 @@
 
 package com.twitter.json
 
-import net.lag.extensions._
 import scala.collection.Map
-import scala.collection.immutable.EmptyMap
 import scala.util.parsing.combinator._
+import scala.util.matching.Regex
 
 
 trait JsonSerializable {
@@ -36,7 +35,7 @@ class JsonException(reason: String) extends Exception(reason)
  * Stolen (awesomely) from the scala book and fixed by making string quotation explicit.
  */
 private class JsonParser extends JavaTokenParsers {
-  def obj: Parser[Map[String, Any]] = "{" ~> repsep(member, ",") <~ "}" ^^ (new EmptyMap ++ _)
+  def obj: Parser[Map[String, Any]] = "{" ~> repsep(member, ",") <~ "}" ^^ (Map() ++ _)
 
   def arr: Parser[List[Any]] = "[" ~> repsep(value, ",") <~ "]"
 
@@ -48,13 +47,13 @@ private class JsonParser extends JavaTokenParsers {
     case num if num.matches(".*[.eE].*") => BigDecimal(num)
     case num => {
       val rv = num.toLong
-      if (rv >= Math.MIN_INT && rv <= Math.MAX_INT) rv.toInt else rv
+      if (rv >= scala.Int.MinValue && rv <= scala.Int.MaxValue) rv.toInt else rv
     }
   }
 
   def string: Parser[String] =
     "\"" ~> """([^\"[\x00-\x1F]\\]+|\\[\\/bfnrt"]|\\u[a-fA-F0-9]{4})*""".r <~ "\"" ^^
-      { _.replace("""\/""", "/").unquoteC }
+      {aString : String => com.twitter.json.JsonParser.unquoteC(aString.replace("""\/""", "/")) }
 
   def value: Parser[Any] = obj | arr | string | number |
     "null" ^^ (x => null) | "true" ^^ (x => true) | "false" ^^ (x => false)
@@ -68,6 +67,75 @@ private class JsonParser extends JavaTokenParsers {
   }
 }
 
+object JsonParser {
+// we intentionally don't unquote "\$" here, so it can be used to escape interpolation later.
+private val UNQUOTE_RE = """\\(u[\dA-Fa-f]{4}|x[\dA-Fa-f]{2}|[/rnt\"\\])""".r
+
+/**
+* Unquote an ASCII string that has been quoted in a style like
+* {@link #quoteC} and convert it into a standard unicode string.
+* <code>"\\uHHHH"</code> and <code>"\xHH"</code> expressions are unpacked
+* into unicode characters, as well as <code>"\r"</code>, <code>"\n"<code>,
+* <code>"\t"</code>, <code>"\\"<code>, and <code>'\"'</code>.
+*
+* @return an unquoted unicode string
+*/
+  def unquoteC(string : String) = {
+    regexSub(UNQUOTE_RE, string) { m =>
+      val ch = m.group(1).charAt(0) match {
+        // holy crap! this is terrible:
+        case 'u' => Character.valueOf(Integer.valueOf(m.group(1).substring(1), 16).asInstanceOf[Int].toChar)
+        case 'x' => Character.valueOf(Integer.valueOf(m.group(1).substring(1), 16).asInstanceOf[Int].toChar)
+        case 'r' => '\r'
+        case 'n' => '\n'
+        case 't' => '\t'
+        case x => x
+      }
+      ch.toString
+    }
+  }
+
+  /**
+* For every section of a string that matches a regular expression, call
+* a function to determine a replacement (as in python's
+* `re.sub`). The function will be passed the Matcher object
+* corresponding to the substring that matches the pattern, and that
+* substring will be replaced by the function's result.
+*
+* For example, this call:
+*
+* "ohio".regexSub("""h.""".r) { m => "n" }
+*
+* will return the string `"ono"`.
+*
+* The matches are found using `Matcher.find()` and so
+* will obey all the normal java rules (the matches will not overlap,
+* etc).
+*
+* @param re the regex pattern to replace
+* @param replace a function that takes Regex.MatchData objects and
+* returns a string to substitute
+* @return the resulting string with replacements made
+*/
+  def regexSub(re: Regex, wrapped: String)(replace: (Regex.MatchData => String)): String = {
+    var offset = 0
+    var out = new StringBuilder
+
+    for (m <- re.findAllIn(wrapped).matchData) {
+      if (m.start > offset) {
+        out.append(wrapped.substring(offset, m.start))
+      }
+
+      out.append(replace(m))
+      offset = m.end
+    }
+
+    if (offset < wrapped.length) {
+      out.append(wrapped.substring(offset))
+    }
+    out.toString
+  }
+}
 
 /**
  * An explanation of Scala types and their JSON representations.
@@ -142,3 +210,5 @@ object Json {
 case class JsonQuoted(body: String) {
   override def toString = body
 }
+
+
